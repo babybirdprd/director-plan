@@ -17,16 +17,14 @@ use tower_http::services::ServeDir;
 use tower_http::services::ServeFile;
 use tracing::{info, error};
 
-use director_plan::types::{Ticket, Status, FrontendTicket};
+use crate::types::{Ticket, Status, FrontendTicket, Artifacts};
 
 #[derive(Clone)]
 struct AppState {
     workspace_root: PathBuf,
 }
 
-pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
-    // tracing_subscriber is initialized in main now
-
+pub async fn create_app(workspace_root: PathBuf) -> anyhow::Result<Router> {
     let assets_dir = workspace_root.join("assets");
     if !assets_dir.exists() {
         fs::create_dir_all(&assets_dir).await?;
@@ -60,6 +58,13 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit for uploads
         .with_state(state);
 
+    Ok(app)
+}
+
+pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
+    // tracing_subscriber is initialized in main now
+    let app = create_app(workspace_root).await?;
+
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     info!("Listening on {}", addr);
 
@@ -70,6 +75,23 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
 }
 
 // --- Helpers ---
+
+async fn enrich_ticket_artifacts(ticket: &mut FrontendTicket, state: &AppState) {
+    let artifacts_dir = state.workspace_root.join(format!("target/public/artifacts/{}", ticket.id));
+    if artifacts_dir.exists() {
+        let golden = artifacts_dir.join("golden.png");
+        let actual = artifacts_dir.join("actual.png");
+        let diff = artifacts_dir.join("diff.png");
+
+        if golden.exists() && actual.exists() {
+            ticket.artifacts = Some(Artifacts {
+                before_image: format!("/artifacts/{}/golden.png", ticket.id),
+                after_image: format!("/artifacts/{}/actual.png", ticket.id),
+                diff_image: if diff.exists() { Some(format!("/artifacts/{}/diff.png", ticket.id)) } else { None },
+            });
+        }
+    }
+}
 
 fn validate_id(id: &str) -> Result<(), AppError> {
     if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
@@ -130,7 +152,9 @@ async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Fro
                                 }
                             }
                         }
-                        tickets.push(FrontendTicket::from(ticket));
+                        let mut ft = FrontendTicket::from(ticket);
+                        enrich_ticket_artifacts(&mut ft, &state).await;
+                        tickets.push(ft);
                     },
                     Err(e) => error!("Failed to parse ticket {:?}: {}", path, e),
                 }
@@ -151,7 +175,9 @@ async fn get_ticket(
 ) -> Result<Json<FrontendTicket>, AppError> {
     validate_id(&id)?;
     let ticket = load_ticket_with_history(&state, &id).await?;
-    Ok(Json(FrontendTicket::from(ticket)))
+    let mut ft = FrontendTicket::from(ticket);
+    enrich_ticket_artifacts(&mut ft, &state).await;
+    Ok(Json(ft))
 }
 
 #[derive(Deserialize)]
@@ -190,8 +216,10 @@ async fn update_ticket(
 
     // Return the updated ticket using helper to ensure consistency
     let ticket = load_ticket_with_history(&state, &id).await?;
+    let mut ft = FrontendTicket::from(ticket);
+    enrich_ticket_artifacts(&mut ft, &state).await;
 
-    Ok(Json(FrontendTicket::from(ticket)))
+    Ok(Json(ft))
 }
 
 #[tracing::instrument(skip(state))]
@@ -236,58 +264,57 @@ async fn verify_ticket(
 
     let target_artifact_dir = state.workspace_root.join(format!("target/public/artifacts/{}", id));
 
-    if output.status.success() {
-        fs::create_dir_all(&target_artifact_dir).await?;
+    // Always attempt to copy artifacts
+    fs::create_dir_all(&target_artifact_dir).await?;
 
-        // 1. Copy Golden Image
-        if let Some(golden_path) = ticket.verification.golden_image {
-             // Basic protection against golden path traversal
-             if !golden_path.contains("..") && !golden_path.starts_with('/') {
-                 let source_golden = state.workspace_root.join(&golden_path);
-                 if source_golden.exists() {
-                     if let Err(e) = fs::copy(&source_golden, target_artifact_dir.join("golden.png")).await {
-                         error!("Failed to copy golden image: {}", e);
-                     }
-                 }
-             } else {
-                 error!("Invalid golden image path: {}", golden_path);
-             }
+    // 1. Copy Golden Image
+    if let Some(golden_path) = ticket.verification.golden_image {
+            // Basic protection against golden path traversal
+            if !golden_path.contains("..") && !golden_path.starts_with('/') {
+                let source_golden = state.workspace_root.join(&golden_path);
+                if source_golden.exists() {
+                    if let Err(e) = fs::copy(&source_golden, target_artifact_dir.join("golden.png")).await {
+                        error!("Failed to copy golden image: {}", e);
+                    }
+                }
+            } else {
+                error!("Invalid golden image path: {}", golden_path);
+            }
+    }
+
+    // 2. Look for Actual/Diff images generated by the test.
+    // We look in `target/artifacts/{id}` which is a reasonable convention,
+    // or just `actual.png` in current dir (workspace root) if test output is local.
+    // Assuming a convention here is necessary for "wiring".
+    // Let's assume the test dumps `actual.png` and `diff.png` in `target/artifacts/{id}/`
+    // OR we check the workspace root for `actual.png`.
+
+    // Strategy: Check potential locations
+    let potential_actuals = vec![
+        state.workspace_root.join("actual.png"),
+        state.workspace_root.join(format!("target/artifacts/{}/actual.png", id)),
+    ];
+
+    for src in potential_actuals {
+        if src.exists() {
+            if let Err(e) = fs::copy(&src, target_artifact_dir.join("actual.png")).await {
+                error!("Failed to copy actual image: {}", e);
+            }
+            break;
         }
+    }
 
-        // 2. Look for Actual/Diff images generated by the test.
-        // We look in `target/artifacts/{id}` which is a reasonable convention,
-        // or just `actual.png` in current dir (workspace root) if test output is local.
-        // Assuming a convention here is necessary for "wiring".
-        // Let's assume the test dumps `actual.png` and `diff.png` in `target/artifacts/{id}/`
-        // OR we check the workspace root for `actual.png`.
+    let potential_diffs = vec![
+        state.workspace_root.join("diff.png"),
+        state.workspace_root.join(format!("target/artifacts/{}/diff.png", id)),
+    ];
 
-        // Strategy: Check potential locations
-        let potential_actuals = vec![
-            state.workspace_root.join("actual.png"),
-            state.workspace_root.join(format!("target/artifacts/{}/actual.png", id)),
-        ];
-
-        for src in potential_actuals {
+    for src in potential_diffs {
             if src.exists() {
-                if let Err(e) = fs::copy(&src, target_artifact_dir.join("actual.png")).await {
-                    error!("Failed to copy actual image: {}", e);
-                }
-                break;
+            if let Err(e) = fs::copy(&src, target_artifact_dir.join("diff.png")).await {
+                error!("Failed to copy diff image: {}", e);
             }
-        }
-
-        let potential_diffs = vec![
-            state.workspace_root.join("diff.png"),
-            state.workspace_root.join(format!("target/artifacts/{}/diff.png", id)),
-        ];
-
-        for src in potential_diffs {
-             if src.exists() {
-                if let Err(e) = fs::copy(&src, target_artifact_dir.join("diff.png")).await {
-                    error!("Failed to copy diff image: {}", e);
-                }
-                break;
-            }
+            break;
         }
     }
 

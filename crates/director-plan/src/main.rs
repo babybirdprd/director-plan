@@ -5,7 +5,7 @@ use anyhow::{Result, Context};
 use std::process::Command;
 use colored::*;
 
-mod server;
+use director_plan::server;
 
 #[derive(Parser)]
 #[command(name = "director-plan")]

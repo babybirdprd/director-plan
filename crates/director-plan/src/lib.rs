@@ -1,4 +1,5 @@
 pub mod types;
+pub mod server;
 
 use std::fs;
 use std::path::PathBuf;
