@@ -7,8 +7,12 @@ def test_ticket_diff_verification(page: Page):
     page.goto("http://localhost:3000")
 
     print("Waiting for T-FAIL...")
-    # Wait for the sidebar item to be visible. It might be H4.
+    # Wait for the sidebar item to be visible.
     expect(page.get_by_text("T-FAIL")).to_be_visible(timeout=10000)
+
+    output_list = "/home/jules/verification/verification_list.png"
+    print(f"Taking list screenshot to {output_list}...")
+    page.screenshot(path=output_list, full_page=True)
 
     print("Clicking T-FAIL...")
     # Click the sidebar item.
@@ -21,17 +25,16 @@ def test_ticket_diff_verification(page: Page):
     print("Waiting for images...")
     time.sleep(3) # Give explicit time for images to load
 
-    output_path = "/home/jules/verification/verification.png"
-    print(f"Taking screenshot to {output_path}...")
-    page.screenshot(path=output_path, full_page=True)
+    output_detail = "/home/jules/verification/verification_detail.png"
+    print(f"Taking detail screenshot to {output_detail}...")
+    page.screenshot(path=output_detail, full_page=True)
 
 if __name__ == "__main__":
     os.makedirs("/home/jules/verification", exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        # Set viewport large enough to see everything
-        page.set_viewport_size({"width": 1280, "height": 800})
+        page.set_viewport_size({"width": 1600, "height": 900})
         try:
             test_ticket_diff_verification(page)
             print("Verification successful.")

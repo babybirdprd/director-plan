@@ -32,7 +32,7 @@ created_at = 2024-05-22T00:00:00Z
 [spec]
 description = "Test to verify visual regression failure artifacts are captured."
 constraints = []
-relevant_files = []
+relevant_files = ["crates/director-core/tests/visual_regression.rs"]
 
 [verification]
 command = "sh -c 'mkdir -p target/artifacts/T-FAIL && cargo test -p director-core --no-default-features --features mock_video --test visual_regression test_visual_basic_box; cp crates/director-core/target/visual_regression_failures/test_visual_basic_box_actual.png target/artifacts/T-FAIL/actual.png; cp crates/director-core/target/visual_regression_failures/test_visual_basic_box_diff.png target/artifacts/T-FAIL/diff.png'"

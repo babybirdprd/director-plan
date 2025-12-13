@@ -17,7 +17,7 @@ use tower_http::services::ServeDir;
 use tower_http::services::ServeFile;
 use tracing::{info, error};
 
-use crate::types::{Ticket, Status, FrontendTicket};
+use crate::types::{Ticket, Status, FrontendTicket, Artifacts};
 
 #[derive(Clone)]
 struct AppState {
@@ -75,6 +75,23 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
 }
 
 // --- Helpers ---
+
+async fn enrich_ticket_artifacts(ticket: &mut FrontendTicket, state: &AppState) {
+    let artifacts_dir = state.workspace_root.join(format!("target/public/artifacts/{}", ticket.id));
+    if artifacts_dir.exists() {
+        let golden = artifacts_dir.join("golden.png");
+        let actual = artifacts_dir.join("actual.png");
+        let diff = artifacts_dir.join("diff.png");
+
+        if golden.exists() && actual.exists() {
+            ticket.artifacts = Some(Artifacts {
+                before_image: format!("/artifacts/{}/golden.png", ticket.id),
+                after_image: format!("/artifacts/{}/actual.png", ticket.id),
+                diff_image: if diff.exists() { Some(format!("/artifacts/{}/diff.png", ticket.id)) } else { None },
+            });
+        }
+    }
+}
 
 fn validate_id(id: &str) -> Result<(), AppError> {
     if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
@@ -135,7 +152,9 @@ async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Fro
                                 }
                             }
                         }
-                        tickets.push(FrontendTicket::from(ticket));
+                        let mut ft = FrontendTicket::from(ticket);
+                        enrich_ticket_artifacts(&mut ft, &state).await;
+                        tickets.push(ft);
                     },
                     Err(e) => error!("Failed to parse ticket {:?}: {}", path, e),
                 }
@@ -156,7 +175,9 @@ async fn get_ticket(
 ) -> Result<Json<FrontendTicket>, AppError> {
     validate_id(&id)?;
     let ticket = load_ticket_with_history(&state, &id).await?;
-    Ok(Json(FrontendTicket::from(ticket)))
+    let mut ft = FrontendTicket::from(ticket);
+    enrich_ticket_artifacts(&mut ft, &state).await;
+    Ok(Json(ft))
 }
 
 #[derive(Deserialize)]
@@ -195,8 +216,10 @@ async fn update_ticket(
 
     // Return the updated ticket using helper to ensure consistency
     let ticket = load_ticket_with_history(&state, &id).await?;
+    let mut ft = FrontendTicket::from(ticket);
+    enrich_ticket_artifacts(&mut ft, &state).await;
 
-    Ok(Json(FrontendTicket::from(ticket)))
+    Ok(Json(ft))
 }
 
 #[tracing::instrument(skip(state))]
