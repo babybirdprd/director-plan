@@ -1,0 +1,5 @@
+{
+  "name": "Director Studio",
+  "description": "A Linear-meets-Unreal dashboard for orchestrating AI agents, verifying visual render results, and monitoring engine performance.",
+  "requestFramePermissions": []
+}
