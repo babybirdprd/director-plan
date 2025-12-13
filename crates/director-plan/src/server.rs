@@ -14,9 +14,10 @@ use tokio::fs;
 use tokio::process::Command;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::services::ServeFile;
 use tracing::{info, error};
 
-use director_plan::types::{Ticket, Status};
+use director_plan::types::{Ticket, Status, FrontendTicket};
 
 #[derive(Clone)]
 struct AppState {
@@ -68,44 +69,20 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-// Custom ServeFile handler for fallback because ServeDir fallback is a bit tricky with SPA
-// Actually ServeDir::new("dist").fallback(ServeFile::new("dist/index.html")) works in newer tower-http
-// But let's implement a simple handler just in case or use the one from tower-http if available.
-// ServeFile is in tower_http::services::ServeFile.
+// --- Helpers ---
 
-use tower_http::services::ServeFile;
-
-// --- Handlers ---
-
-async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Ticket>>, AppError> {
-    let tickets_dir = state.workspace_root.join("plan/tickets");
-    let mut tickets = Vec::new();
-
-    if tickets_dir.exists() {
-        let mut entries = fs::read_dir(tickets_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "toml") {
-                let content = fs::read_to_string(&path).await?;
-                // Parse leniently or log errors
-                match toml_edit::de::from_str::<Ticket>(&content) {
-                    Ok(ticket) => tickets.push(ticket),
-                    Err(e) => error!("Failed to parse ticket {:?}: {}", path, e),
-                }
-            }
-        }
+fn validate_id(id: &str) -> Result<(), AppError> {
+    if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err(AppError(anyhow::anyhow!("Invalid ID format"), StatusCode::BAD_REQUEST));
     }
-
-    // Sort by ID
-    tickets.sort_by(|a, b| a.meta.id.cmp(&b.meta.id));
-
-    Ok(Json(tickets))
+    // Prevent directory traversal
+    if id.contains("..") || id.starts_with('/') {
+        return Err(AppError(anyhow::anyhow!("Invalid ID format"), StatusCode::BAD_REQUEST));
+    }
+    Ok(())
 }
 
-async fn get_ticket(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Ticket>, AppError> {
+async fn load_ticket_with_history(state: &AppState, id: &str) -> Result<Ticket, AppError> {
     let ticket_path = state.workspace_root.join(format!("plan/tickets/{}.toml", id));
 
     if !ticket_path.exists() {
@@ -119,11 +96,60 @@ async fn get_ticket(
     // Load history
     let history_path = state.workspace_root.join(format!("plan/history/{}.log", id));
     if history_path.exists() {
-        let history_content = fs::read_to_string(&history_path).await?;
-        ticket.history.log = history_content.lines().map(String::from).collect();
+        if let Ok(history_content) = fs::read_to_string(&history_path).await {
+            ticket.history.log = history_content.lines().map(String::from).collect();
+        }
     }
 
-    Ok(Json(ticket))
+    Ok(ticket)
+}
+
+// --- Handlers ---
+
+async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<FrontendTicket>>, AppError> {
+    let tickets_dir = state.workspace_root.join("plan/tickets");
+    let mut tickets = Vec::new();
+
+    if tickets_dir.exists() {
+        let mut entries = fs::read_dir(tickets_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "toml") {
+                let content = fs::read_to_string(&path).await?;
+                // Parse leniently or log errors
+                match toml_edit::de::from_str::<Ticket>(&content) {
+                    Ok(mut ticket) => {
+                         // Load history
+                         // Sanitize ticket ID from file content just in case, though file system list is safe-ish
+                        if validate_id(&ticket.meta.id).is_ok() {
+                            let history_path = state.workspace_root.join(format!("plan/history/{}.log", ticket.meta.id));
+                            if history_path.exists() {
+                                if let Ok(history_content) = fs::read_to_string(&history_path).await {
+                                    ticket.history.log = history_content.lines().map(String::from).collect();
+                                }
+                            }
+                        }
+                        tickets.push(FrontendTicket::from(ticket));
+                    },
+                    Err(e) => error!("Failed to parse ticket {:?}: {}", path, e),
+                }
+            }
+        }
+    }
+
+    // Sort by ID
+    tickets.sort_by(|a, b| a.id.cmp(&b.id));
+
+    Ok(Json(tickets))
+}
+
+async fn get_ticket(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<FrontendTicket>, AppError> {
+    validate_id(&id)?;
+    let ticket = load_ticket_with_history(&state, &id).await?;
+    Ok(Json(FrontendTicket::from(ticket)))
 }
 
 #[derive(Deserialize)]
@@ -136,7 +162,9 @@ async fn update_ticket(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(payload): Json<UpdateTicketPayload>,
-) -> Result<Json<Ticket>, AppError> {
+) -> Result<Json<FrontendTicket>, AppError> {
+    validate_id(&id)?;
+
     let ticket_path = state.workspace_root.join(format!("plan/tickets/{}.toml", id));
 
     if !ticket_path.exists() {
@@ -157,26 +185,22 @@ async fn update_ticket(
 
     fs::write(&ticket_path, doc.to_string()).await?;
 
-    // Return the updated ticket (by re-reading/parsing to be safe)
-    let ticket: Ticket = toml_edit::de::from_str(&doc.to_string())
-        .map_err(|e| anyhow::anyhow!("Failed to parse updated ticket: {}", e))?;
+    // Return the updated ticket using helper to ensure consistency
+    let ticket = load_ticket_with_history(&state, &id).await?;
 
-    Ok(Json(ticket))
+    Ok(Json(FrontendTicket::from(ticket)))
 }
 
 async fn verify_ticket(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let ticket_path = state.workspace_root.join(format!("plan/tickets/{}.toml", id));
+    validate_id(&id)?;
 
-    if !ticket_path.exists() {
-        return Err(AppError(anyhow::anyhow!("Ticket not found"), StatusCode::NOT_FOUND));
-    }
-
-    let content = fs::read_to_string(&ticket_path).await?;
-    let ticket: Ticket = toml_edit::de::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse ticket: {}", e))?;
+    // We don't need history for verification execution, but consistent loading is good.
+    // However, verify reads raw TOML string to parse.
+    // load_ticket_with_history is fine.
+    let ticket = load_ticket_with_history(&state, &id).await?;
 
     let command_str = &ticket.verification.command;
     let parts: Vec<&str> = command_str.split_whitespace().collect();
@@ -187,69 +211,87 @@ async fn verify_ticket(
 
     info!("Running verification for {}: {}", id, command_str);
 
-    let output = Command::new(parts[0])
-        .args(&parts[1..])
-        .current_dir(&state.workspace_root)
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?;
+    let output = if cfg!(target_os = "windows") {
+        Command::new("powershell")
+            .args(["-Command", command_str])
+            .current_dir(&state.workspace_root)
+            .output()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?
+    } else {
+        Command::new("sh")
+            .args(["-c", command_str])
+            .current_dir(&state.workspace_root)
+            .output()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Process artifacts if specified
-    // Logic: "Ensure it copies the resulting 'Golden' and 'Actual' images to a public directory (e.g., target/public/artifacts/T-001/) so the web view can load them."
-    // We assume the test generates files. If ticket has golden_image, we might look for that.
-    // Since the prompt doesn't specify WHERE the test puts files, we assume standard places or that the command handles it.
-    // However, the GLUE LOGIC says: "When plan verify runs in Rust, ensure it copies..."
-    // So we need to do the copying here.
-
-    let _artifact_base_url = format!("http://localhost:3000/artifacts/{}", id);
     let target_artifact_dir = state.workspace_root.join(format!("target/public/artifacts/{}", id));
 
-    // We will attempt to find generated images. This is a heuristic since we don't know exactly what the test produces.
-    // BUT, commonly visual regression tests produce `actual.png` and `diff.png`.
-    // Let's assume the test writes to `target/artifacts/` or `artifacts/` or similar.
-    // Or we can just look for files mentioned in the ticket?
-
-    // For now, let's create the directory and return what we have.
-    // If the test command is well behaved, maybe it puts them there?
-    // Let's assume we need to copy.
-    // Let's search for "actual.png" and "golden.png" in the workspace target dir?
-    // Without specific knowledge of where `cargo test` puts files, it's hard.
-    // But the prompt says: "Implement the 'Glue' Logic... ensure it copies..."
-
-    // Let's assume the verification command produces files in `target/tmp` or similar, or just trust the test output.
-    // But for the DEMO/Wiring, I will create dummy files if they don't exist, OR check specific locations.
-
-    // Let's verify if the ticket has a golden image.
-    let golden_image = ticket.verification.golden_image.clone();
-
     if output.status.success() {
-        // If success, we might assume artifacts are ready.
-        // Let's try to find them.
-        // For the purpose of "wiring up", I'll mock the artifact copying if I can't find them,
-        // or just ensure the directory exists.
         fs::create_dir_all(&target_artifact_dir).await?;
 
-        // If there is a golden image in the repo, copy it to the public dir
-        if let Some(golden_path) = golden_image {
-             let source_golden = state.workspace_root.join(&golden_path);
-             if source_golden.exists() {
-                 fs::copy(&source_golden, target_artifact_dir.join("golden.png")).await?;
+        // 1. Copy Golden Image
+        if let Some(golden_path) = ticket.verification.golden_image {
+             // Basic protection against golden path traversal
+             if !golden_path.contains("..") && !golden_path.starts_with('/') {
+                 let source_golden = state.workspace_root.join(&golden_path);
+                 if source_golden.exists() {
+                     if let Err(e) = fs::copy(&source_golden, target_artifact_dir.join("golden.png")).await {
+                         error!("Failed to copy golden image: {}", e);
+                     }
+                 }
+             } else {
+                 error!("Invalid golden image path: {}", golden_path);
              }
         }
 
-        // We might also want to copy "actual.png" if it was generated.
-        // Let's look for "actual.png" in the root or target?
-        // Let's leave this for now and just return the stdout.
+        // 2. Look for Actual/Diff images generated by the test.
+        // We look in `target/artifacts/{id}` which is a reasonable convention,
+        // or just `actual.png` in current dir (workspace root) if test output is local.
+        // Assuming a convention here is necessary for "wiring".
+        // Let's assume the test dumps `actual.png` and `diff.png` in `target/artifacts/{id}/`
+        // OR we check the workspace root for `actual.png`.
+
+        // Strategy: Check potential locations
+        let potential_actuals = vec![
+            state.workspace_root.join("actual.png"),
+            state.workspace_root.join(format!("target/artifacts/{}/actual.png", id)),
+        ];
+
+        for src in potential_actuals {
+            if src.exists() {
+                if let Err(e) = fs::copy(&src, target_artifact_dir.join("actual.png")).await {
+                    error!("Failed to copy actual image: {}", e);
+                }
+                break;
+            }
+        }
+
+        let potential_diffs = vec![
+            state.workspace_root.join("diff.png"),
+            state.workspace_root.join(format!("target/artifacts/{}/diff.png", id)),
+        ];
+
+        for src in potential_diffs {
+             if src.exists() {
+                if let Err(e) = fs::copy(&src, target_artifact_dir.join("diff.png")).await {
+                    error!("Failed to copy diff image: {}", e);
+                }
+                break;
+            }
+        }
     }
 
     Ok(Json(json!({
         "success": output.status.success(),
         "stdout": stdout,
         "stderr": stderr,
-        "artifacts_path": format!("/artifacts/{}", id) // Relative path for frontend
+        "artifacts_path": format!("/artifacts/{}", id)
     })))
 }
 

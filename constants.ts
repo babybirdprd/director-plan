@@ -14,7 +14,7 @@ export const COLORS = {
 
 export const COLUMNS: Column[] = [
   { id: 'todo', label: 'To Do' },
-  { id: 'active', label: 'Active' },
+  { id: 'in_progress', label: 'Active' },
   { id: 'review', label: 'Review' },
   { id: 'done', label: 'Done' },
 ];
@@ -50,7 +50,7 @@ export const MOCK_TICKETS: Ticket[] = [
     id: 'T-002',
     title: 'Optimize Particle System',
     description: 'Particle rendering is causing frame drops in heavy scenes.',
-    status: 'active',
+    status: 'in_progress',
     priority: 'high',
     owner: 'agent-devin',
     verification_status: 'pending',
