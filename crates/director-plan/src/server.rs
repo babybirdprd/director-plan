@@ -55,7 +55,7 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
         .nest_service("/artifacts", ServeDir::new(workspace_root.join("target/public/artifacts")))
         .nest_service("/assets", ServeDir::new(workspace_root.join("assets")))
         // SPA Fallback for everything else to dist/
-        .fallback_service(ServeDir::new(workspace_root.join("dist")).fallback(ServeFile::new(workspace_root.join("dist/index.html"))))
+        .fallback_service(ServeDir::new(workspace_root.join("apps/director-plan/dist")).fallback(ServeFile::new(workspace_root.join("apps/director-plan/dist/index.html"))))
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit for uploads
         .with_state(state);

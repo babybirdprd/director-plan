@@ -2,8 +2,12 @@ import { test, expect } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 
-const PLAN_DIR = path.join(process.cwd(), 'plan/tickets');
-const ASSETS_DIR = path.join(process.cwd(), 'assets');
+// Find the root of the repo regardless of where test is run from.
+// Assuming we are in apps/director-plan/e2e
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+const PLAN_DIR = path.join(REPO_ROOT, 'plan/tickets');
+const ASSETS_DIR = path.join(REPO_ROOT, 'assets');
 
 test.describe('Director Flow', () => {
   test.beforeEach(async () => {
@@ -78,7 +82,7 @@ command = "echo pass"
     const ticketId = 'T-E2E-VISUAL';
     const ticketPath = path.join(PLAN_DIR, `${ticketId}.toml`);
     // Create dummy artifacts
-    const goldenPath = path.join(process.cwd(), 'target/public/artifacts', ticketId);
+    const goldenPath = path.join(REPO_ROOT, 'target/public/artifacts', ticketId);
     fs.mkdirSync(goldenPath, { recursive: true });
 
     const ticketContent = `
@@ -146,7 +150,7 @@ golden_image = "assets/golden.png"
     await page.goto('/assets'); // Assuming there is a route /assets or navigation to it
 
     // Action: Upload a dummy file
-    const testFilePath = path.join(process.cwd(), 'test_font.ttf');
+    const testFilePath = path.join(REPO_ROOT, 'test_font.ttf');
     fs.writeFileSync(testFilePath, 'dummy font content');
 
     // Find upload input
