@@ -5,6 +5,8 @@ use anyhow::{Result, Context};
 use std::process::Command;
 use colored::*;
 
+mod server;
+
 #[derive(Parser)]
 #[command(name = "director-plan")]
 #[command(about = "Headless Project Management for AI Agents", long_about = None)]
@@ -45,6 +47,8 @@ enum Commands {
         #[command(subcommand)]
         subcmd: DocsCommands,
     },
+    /// Start the server
+    Serve,
 }
 
 #[derive(Subcommand)]
@@ -82,12 +86,16 @@ enum Format {
     Table,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = std::env::current_dir()?;
     let plan = DirectorPlan::new(root.clone());
 
     match cli.command {
+        Commands::Serve => {
+             server::start_server(root).await?;
+        }
         Commands::List { status, format } => {
             let filter = status.map(Status::from);
             let tickets = plan.list_tickets(filter)?;

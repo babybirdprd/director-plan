@@ -102,7 +102,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({ ticket, on
                         ))}
                          {isVerifying && (
                              <div className="flex gap-2 text-gray-500 animate-pulse">
-                                 <span className="opacity-30">></span>
+                                 <span className="opacity-30">&gt;</span>
                                  <span>Running verification suite...</span>
                              </div>
                          )}
