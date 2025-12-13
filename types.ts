@@ -9,14 +9,14 @@ export interface Artifacts {
   diff_image?: string;
 }
 
-export type TicketStatus = 'todo' | 'active' | 'review' | 'done';
+export type TicketStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'archived';
 
 export interface Ticket {
   id: string;
   title: string;
   description: string;
   status: TicketStatus;
-  priority: 'low' | 'medium' | 'high';
+  priority: 'low' | 'medium' | 'high' | 'critical';
   owner: string;
   verification_status: 'pending' | 'success' | 'failure';
   metrics?: Metrics;
