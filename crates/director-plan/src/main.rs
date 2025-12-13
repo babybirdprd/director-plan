@@ -11,8 +11,17 @@ mod server;
 #[command(name = "director-plan")]
 #[command(about = "Headless Project Management for AI Agents", long_about = None)]
 struct Cli {
+    #[arg(long, default_value = "text")]
+    log_format: LogFormat,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -89,6 +98,16 @@ enum Format {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize tracing
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+
+    match cli.log_format {
+        LogFormat::Json => builder.json().init(),
+        LogFormat::Text => builder.init(),
+    }
+
     let root = std::env::current_dir()?;
     let plan = DirectorPlan::new(root.clone());
 
