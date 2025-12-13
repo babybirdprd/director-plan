@@ -5,6 +5,7 @@ set -e
 echo "Building director-plan..."
 cargo build -p director-plan
 
+REPO_ROOT=$(pwd)
 DIRECTOR_BIN=$(pwd)/target/debug/director-plan
 WORK_DIR=$(mktemp -d)
 echo "Working in $WORK_DIR"
@@ -67,6 +68,8 @@ curl -X POST http://localhost:3000/api/tickets/T-FAIL/verify
 # Check artifacts
 if [ -f "target/public/artifacts/T-FAIL/diff.png" ]; then
   echo "SUCCESS: Diff image generated at target/public/artifacts/T-FAIL/diff.png"
+  mkdir -p $REPO_ROOT/proof
+  cp target/public/artifacts/T-FAIL/*.png $REPO_ROOT/proof/
 else
   echo "FAILURE: Diff image not found."
   cat server.log
