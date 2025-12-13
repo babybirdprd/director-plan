@@ -2,7 +2,7 @@ import { Ticket, Asset, TicketStatus } from '../types';
 
 // Real API Service
 class ApiService {
-  private baseUrl = 'http://localhost:3000/api';
+  private baseUrl = '/api';
 
   async getTickets(): Promise<Ticket[]> {
     const response = await fetch(`${this.baseUrl}/tickets`);

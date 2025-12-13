@@ -25,7 +25,7 @@ struct AppState {
 }
 
 pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    // tracing_subscriber is initialized in main now
 
     let assets_dir = workspace_root.join("assets");
     if !assets_dir.exists() {
@@ -55,7 +55,7 @@ pub async fn start_server(workspace_root: PathBuf) -> anyhow::Result<()> {
         .nest_service("/artifacts", ServeDir::new(workspace_root.join("target/public/artifacts")))
         .nest_service("/assets", ServeDir::new(workspace_root.join("assets")))
         // SPA Fallback for everything else to dist/
-        .fallback_service(ServeDir::new(workspace_root.join("dist")).fallback(ServeFile::new(workspace_root.join("dist/index.html"))))
+        .fallback_service(ServeDir::new(workspace_root.join("apps/director-plan/dist")).fallback(ServeFile::new(workspace_root.join("apps/director-plan/dist/index.html"))))
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit for uploads
         .with_state(state);
@@ -106,6 +106,7 @@ async fn load_ticket_with_history(state: &AppState, id: &str) -> Result<Ticket, 
 
 // --- Handlers ---
 
+#[tracing::instrument(skip(state))]
 async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<FrontendTicket>>, AppError> {
     let tickets_dir = state.workspace_root.join("plan/tickets");
     let mut tickets = Vec::new();
@@ -143,6 +144,7 @@ async fn list_tickets(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Fro
     Ok(Json(tickets))
 }
 
+#[tracing::instrument(skip(state))]
 async fn get_ticket(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -158,6 +160,7 @@ struct UpdateTicketPayload {
     owner: Option<String>,
 }
 
+#[tracing::instrument(skip(state, payload))]
 async fn update_ticket(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -191,6 +194,7 @@ async fn update_ticket(
     Ok(Json(FrontendTicket::from(ticket)))
 }
 
+#[tracing::instrument(skip(state))]
 async fn verify_ticket(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -295,6 +299,7 @@ async fn verify_ticket(
     })))
 }
 
+#[tracing::instrument(skip(state, multipart))]
 async fn upload_asset(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -376,6 +381,7 @@ struct AppError(anyhow::Error, StatusCode);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        error!("API Error: {}", self.0);
         (
             self.1,
             Json(json!({
