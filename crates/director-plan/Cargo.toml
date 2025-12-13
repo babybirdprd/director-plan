@@ -1,0 +1,16 @@
+[package]
+name = "director-plan"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.53", features = ["derive"] }
+colored = "3.0.0"
+glob = "0.3.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+toml_datetime = { version = "0.7.3", features = ["serde"] }
+toml_edit = { version = "0.23.9", features = ["serde"] }
+walkdir = "2.5.0"
