@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use director_plan::{DirectorPlan, types::{Status, TicketSummary}};
 use director_plan::context::discovery::discover_context;
 use director_plan::execution_loop::ExecutionLoop;
+use director_plan::worker::Worker;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
 use std::process::Command;
@@ -58,6 +59,11 @@ enum Commands {
         id: String,
         #[arg(long)]
         agent: String,
+    },
+    /// Run the Radkit Worker
+    Worker {
+        #[arg(long, default_value_t = 1)]
+        pool: usize,
     },
     /// Search documentation
     Docs {
@@ -122,6 +128,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Serve => {
              server::start_server(root).await?;
+        }
+        Commands::Worker { pool } => {
+            let worker = Worker::new(root, pool);
+            worker.run().await?;
         }
         Commands::List { status, format } => {
             let filter = status.map(Status::from);

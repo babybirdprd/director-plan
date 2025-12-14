@@ -83,9 +83,14 @@ pub struct Spec {
 pub struct Verification {
     pub command: String,
     pub golden_image: Option<String>,
-    #[serde(default)]
-    pub max_retries: Option<u32>,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_confidence_threshold")]
+    pub min_confidence: f32,
 }
+
+fn default_max_retries() -> u32 { 5 }
+fn default_confidence_threshold() -> f32 { 0.8 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct History {
