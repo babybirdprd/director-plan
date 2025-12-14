@@ -75,12 +75,16 @@ pub struct Spec {
     pub constraints: Vec<String>,
     #[serde(default)]
     pub relevant_files: Vec<String>,
+    #[serde(default)]
+    pub auto_context: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Verification {
     pub command: String,
     pub golden_image: Option<String>,
+    #[serde(default)]
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

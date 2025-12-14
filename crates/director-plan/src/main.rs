@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use director_plan::{DirectorPlan, types::{Status, TicketSummary}};
+use director_plan::context::discovery::discover_context;
+use director_plan::execution_loop::ExecutionLoop;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
 use std::process::Command;
@@ -50,6 +52,12 @@ enum Commands {
         owner: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+    },
+    /// Execute a ticket using an agent
+    Execute {
+        id: String,
+        #[arg(long)]
+        agent: String,
     },
     /// Search documentation
     Docs {
@@ -147,11 +155,21 @@ async fn main() -> Result<()> {
             println!("## Description");
             println!("{}", ticket.spec.description);
             println!("\n## Constraints");
-            for c in ticket.spec.constraints {
+            for c in &ticket.spec.constraints {
                 println!("- {}", c);
             }
 
-            for file_path in ticket.spec.relevant_files {
+            let mut relevant_files = ticket.spec.relevant_files.clone();
+
+            // Auto-Context
+            if relevant_files.is_empty() {
+                // If implicit or explicit auto_context is desired.
+                // PR says: "When director-plan context <T-ID> is called, if relevant_files is empty in the TOML, the engine now dynamically populates context."
+                println!("\n>> Auto-Context Discovery Triggered...");
+                relevant_files = discover_context(&ticket, &root);
+            }
+
+            for file_path in relevant_files {
                 let p = root.join(&file_path);
                 if p.exists() {
                     println!("\n## Context File: {}", file_path);
@@ -199,6 +217,11 @@ async fn main() -> Result<()> {
         }
         Commands::Update { id, status, owner, comment } => {
              update_ticket(&plan, &id, status.map(Status::from), owner, comment)?;
+        }
+        Commands::Execute { id, agent } => {
+            let ticket = plan.get_ticket(&id)?;
+            let mut loop_runner = ExecutionLoop::new(&root, agent, ticket);
+            loop_runner.run()?;
         }
         Commands::Docs { subcmd } => {
             match subcmd {
