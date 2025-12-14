@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { KanbanBoard } from './components/KanbanBoard';
 import { TicketDetailModal } from './components/TicketDetailModal';
 import { AssetLibrary } from './components/AssetLibrary';
+import { SettingsPage } from './components/SettingsPage';
 import { api } from './services/api';
 import { Ticket, TicketStatus } from './types';
 
@@ -12,8 +13,10 @@ const App: React.FC = () => {
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (currentRoute === '/') {
+       loadData();
+    }
+  }, [currentRoute]);
 
   const loadData = async () => {
     const data = await api.getTickets();
@@ -22,9 +25,8 @@ const App: React.FC = () => {
 
   const handleVerifyTicket = async (id: string) => {
     await api.verifyTicket(id);
-    // In a real app, we'd reload the specific ticket. Here we simulate an update
-    // Or just let the verify call finish.
     console.log("Verified");
+    loadData(); // Reload to get updated status/artifacts
   };
 
   const handleTicketMove = async (ticketId: string, newStatus: TicketStatus) => {
@@ -49,6 +51,8 @@ const App: React.FC = () => {
         );
       case '/assets':
         return <AssetLibrary />;
+      case '/settings':
+        return <SettingsPage />;
       default:
         return <div className="p-8 text-white">404 Not Found</div>;
     }

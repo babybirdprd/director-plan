@@ -3,6 +3,7 @@ pub mod server;
 pub mod context;
 pub mod verification;
 pub mod execution_loop;
+pub mod worker;
 
 use std::fs;
 use std::path::PathBuf;
